@@ -40,15 +40,24 @@ GRID_WIDTH = SCREEN_WIDTH // GRID_SIZE
 GRID_HEIGHT = SCREEN_HEIGHT // GRID_SIZE
 SNAKE_INITIAL_LENGTH = 3
 
+# Dynamically detect the directory of the script
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(BASE_DIR, 'Assets')
+
 # Load images
-apple_img = pygame.image.load('/home/virtuos/Downloads/snakev2/Assets/apple.png')  # Absolute path
-apple_img = pygame.transform.scale(apple_img, (GRID_SIZE, GRID_SIZE))
+try:
+    apple_img = pygame.image.load(os.path.join(ASSETS_DIR, 'apple.png'))
+    apple_img = pygame.transform.scale(apple_img, (GRID_SIZE, GRID_SIZE))
+except (pygame.error, FileNotFoundError):
+    apple_img = None  # Fallback to a red block if the image is not found
 
 GAME_STATE_MENU = 0
 GAME_STATE_PLAYING = 1
 GAME_STATE_PAUSED = 2
 GAME_STATE_GAME_OVER = 3
 GAME_STATE_GRAPHICS = 4
+GAME_STATE_SHOP = 5  # Add GAME_STATE_SHOP
+GAME_STATE_CUSTOM_LEVELS = 6  # Add GAME_STATE_CUSTOM_LEVELS
 DIFFICULTY_EASY = 10
 DIFFICULTY_MEDIUM = 14
 DIFFICULTY_HARD = 17
@@ -92,15 +101,21 @@ invincible = False  # Add invincible variable initialization
 difficulty = DIFFICULTY_EASY
 game_state = GAME_STATE_MENU  # Start in menu state
 
+# Global variable to hold multiplayer state
+multiplayer_enabled = False  # Initialize multiplayer_enabled
+
+# Global variable to hold survival mode state
+survival_mode_enabled = False  # Initialize survival_mode_enabled
+
 MUSIC_THEMES = {
-    'theme1': '/home/virtuos/Downloads/snakev2/Assets/theme1.wav',
-    'theme2': '/home/virtuos/Downloads/snakev2/Assets/theme2.wav',
-    'theme3': '/home/virtuos/Downloads/snakev2/Assets/theme3.wav'
+    'theme1': os.path.join(ASSETS_DIR, 'theme1.wav'),
+    'theme2': os.path.join(ASSETS_DIR, 'theme2.wav'),
+    'theme3': os.path.join(ASSETS_DIR, 'theme3.wav')
 }
 
 SOUND_EFFECTS = {
-    'eat': pygame.mixer.Sound('/home/virtuos/Downloads/snakev2/Assets/eat.wav'),
-    'die': pygame.mixer.Sound('/home/virtuos/Downloads/snakev2/Assets/die.wav')
+    'eat': pygame.mixer.Sound(os.path.join(ASSETS_DIR, 'eat.wav')),
+    'die': pygame.mixer.Sound(os.path.join(ASSETS_DIR, 'die.wav'))
 }
 
 # Load settings
@@ -210,11 +225,11 @@ def draw_grid():
     except pygame.error:
         pass  # Ignore drawing errors if screen not initialized
 
-def draw_snake(snake_list):
-    """Draws the snake on the screen."""
+def draw_snake(snake_list, color):
+    """Draws a snake on the screen."""
     try:
         for segment in snake_list:
-            pygame.draw.rect(screen, current_snake_color, 
+            pygame.draw.rect(screen, color, 
                            (segment[0] * GRID_SIZE, 
                             segment[1] * GRID_SIZE, 
                             GRID_SIZE, GRID_SIZE))
@@ -225,7 +240,10 @@ def draw_food():
     """Draws the food on the screen."""
     try:
         for food_pos in foods:
-            screen.blit(apple_img, (food_pos[0] * GRID_SIZE, food_pos[1] * GRID_SIZE))
+            if apple_img:
+                screen.blit(apple_img, (food_pos[0] * GRID_SIZE, food_pos[1] * GRID_SIZE))
+            else:
+                pygame.draw.rect(screen, RED, (food_pos[0] * GRID_SIZE, food_pos[1] * GRID_SIZE, GRID_SIZE, GRID_SIZE))
     except pygame.error:
         pass  # Ignore drawing errors if screen not initialized
 
@@ -292,8 +310,9 @@ def display_message(message, color, x, y):
 
 def handle_input(event):
     """Handles user input for the game."""
-    global snake_direction, game_state, ai_enabled, wall_wrapping_enabled, power_up_mode_enabled, obstacle_mode_enabled, invincible
+    global snake_direction, player_2_direction, game_state, wall_wrapping_enabled, power_up_mode_enabled, obstacle_mode_enabled, invincible, ai_enabled, survival_mode_enabled
     if event.type == pygame.KEYDOWN:
+        # Player 1 controls (arrow keys)
         if event.key == pygame.K_UP and snake_direction != (0, 1):
             snake_direction = (0, -1)
         elif event.key == pygame.K_DOWN and snake_direction != (0, -1):
@@ -302,10 +321,21 @@ def handle_input(event):
             snake_direction = (-1, 0)
         elif event.key == pygame.K_RIGHT and snake_direction != (-1, 0):
             snake_direction = (1, 0)
-        elif event.key == pygame.K_ESCAPE:
+        
+        # Player 2 controls (WASD)
+        if multiplayer_enabled and not ai_enabled:
+            if event.key == pygame.K_w and player_2_direction != (0, 1):
+                player_2_direction = (0, -1)
+            elif event.key == pygame.K_s and player_2_direction != (0, -1):
+                player_2_direction = (0, 1)
+            elif event.key == pygame.K_a and player_2_direction != (1, 0):
+                player_2_direction = (-1, 0)
+            elif event.key == pygame.K_d and player_2_direction != (-1, 0):
+                player_2_direction = (1, 0)
+        
+        # Other controls
+        if event.key == pygame.K_ESCAPE:
             game_state = GAME_STATE_PAUSED
-        elif event.key == pygame.K_a:  # 'a' key toggles AI
-            ai_enabled = not ai_enabled
         elif event.key == pygame.K_w:  # 'w' key toggles wall wrapping
             wall_wrapping_enabled = not wall_wrapping_enabled
         elif event.key == pygame.K_p:  # 'p' key toggles power-up mode
@@ -347,7 +377,7 @@ def check_food_collision(snake_head):
             snake_length += 1
             foods.remove(food_pos)  # Remove the eaten food from the list
             place_new_food()  # Place new food to replace the eaten one
-            if obstacle_mode_enabled and len(obstacles) < 50:
+            if obstacle_mode_enabled:
                 add_random_obstacle()  # Add a random obstacle
             return True  # Indicate that food was eaten
     return False
@@ -368,7 +398,7 @@ def place_new_food():
 
 def reset_game():
     """Resets the game to its initial state."""
-    global snake, snake_direction, snake_length, score, foods, game_state, obstacles, power_ups, difficulty, invincible
+    global snake, snake_direction, snake_length, score, foods, game_state, obstacles, power_ups, difficulty, invincible, player_2_snake, player_2_direction, player_2_length
     snake = [(GRID_WIDTH // 2, GRID_HEIGHT // 2)]
     snake_direction = (1, 0)
     snake_length = SNAKE_INITIAL_LENGTH
@@ -377,12 +407,19 @@ def reset_game():
     obstacles = []
     power_ups = []
     invincible = False
+
+    if multiplayer_enabled:
+        # Spawn Player 2 (or AI) a bit away from the middle
+        player_2_snake = [(GRID_WIDTH // 2 - 5, GRID_HEIGHT // 2 + 3)]
+        player_2_direction = (-1, 0)  # Initial direction: left
+        player_2_length = SNAKE_INITIAL_LENGTH
+
     place_food()  # Always place food first
     if obstacle_mode_enabled:
         place_obstacles()  # Then place obstacles if enabled
     if power_up_mode_enabled:
         place_power_up()
-    game_state = GAME_STATE_PLAYING
+    game_state = GAME_STATE_MENU  # Return to menu after reset
 
 def astar(snake_list, start, end):
     """A* pathfinding algorithm."""
@@ -525,110 +562,10 @@ def ai_move(snake_list, foods):
     if best_path and len(best_path) > 1:
         next_pos = best_path[1]
         move = (next_pos[0] - head[0], next_pos[1] - head[1])
-        new_head = (head[0] + move[0], head[1] + move[1])
-        if wall_wrapping_enabled:
-            new_head = (new_head[0] % GRID_WIDTH, new_head[1] % GRID_HEIGHT)
-        if is_safe(snake_list, head, move):
-            temp_snake = [new_head] + snake_list[:-1]
-            temp_grid = create_grid(temp_snake)
-            space = flood_fill(temp_grid.copy(), new_head)
-            if space >= len(snake_list):
-                return move
+        return move
 
     # No safe path to food, find safest direction
-    possible_moves = [(1, 0), (-1, 0), (0, 1), (0, -1)]
-    best_move = None
-    max_space = 0
-
-    for move in possible_moves:
-        new_head = (head[0] + move[0], head[1] + move[1])
-        if wall_wrapping_enabled:
-            new_head = (new_head[0] % GRID_WIDTH, new_head[1] % GRID_HEIGHT)
-        else:
-            # Check for wall collision if wall wrapping is disabled
-            if (new_head[0] < 0 or new_head[0] >= GRID_WIDTH or
-                new_head[1] < 0 or new_head[1] >= GRID_HEIGHT):
-                continue
-        if not is_safe(snake_list, head, move):
-            continue
-        if new_head in obstacles: # Avoid obstacles
-            continue
-        temp_snake = [new_head] + snake_list[:-1]
-        temp_grid = create_grid(temp_snake)
-        space = flood_fill(temp_grid.copy(), new_head)
-        space_score = space
-        if target_food:
-            food_distance = calculate_distance(new_head[0], new_head[1], target_food)
-            space_score += (GRID_WIDTH * GRID_HEIGHT) / (food_distance + 1)
-
-        if space_score > max_space:
-            max_space = space_score
-            best_move = move
-
-    # If no safe moves found, try to avoid reversing
-    if not best_move:
-        if snake_direction == (1, 0):  # Moving right
-            if is_safe(snake_list, head, (0, 1)):
-                best_move = (0, 1)
-            elif is_safe(snake_list, head, (0, -1)):
-                best_move = (0, -1)
-            elif is_safe(snake_list, head, (-1, 0)):
-                best_move = (-1, 0)
-        elif snake_direction == (-1, 0):  # Moving left
-            if is_safe(snake_list, head, (0, 1)):
-                best_move = (0, 1)
-            elif is_safe(snake_list, head, (0, -1)):
-                best_move = (0, -1)
-            elif is_safe(snake_list, head, (1, 0)):
-                best_move = (1, 0)
-        elif snake_direction == (0, 1):  # Moving down
-            if is_safe(snake_list, head, (1, 0)):
-                best_move = (1, 0)
-            elif is_safe(snake_list, head, (-1, 0)):
-                best_move = (-1, 0)
-            elif is_safe(snake_list, head, (0, -1)):
-                best_move = (0, -1)
-        elif snake_direction == (0, -1):  # Moving up
-            if is_safe(snake_list, head, (1, 0)):
-                best_move = (1, 0)
-            elif is_safe(snake_list, head, (-1, 0)):
-                best_move = (-1, 0)
-            elif is_safe(snake_list, head, (0, 1)):
-                best_move = (0, 1)
-
-    # Avoid getting stuck in corners by preferring moves that keep the snake away from walls
-    if not best_move:
-        for move in possible_moves:
-            new_head = (head[0] + move[0], head[1] + move[1])
-            if wall_wrapping_enabled:
-                new_head = (new_head[0] % GRID_WIDTH, new_head[1] % GRID_HEIGHT)
-            if is_safe(snake_list, head, move):
-                if 1 <= new_head[0] < GRID_WIDTH - 1 and 1 <= new_head[1] < GRID_HEIGHT - 1:
-                    best_move = move
-                    break
-
-    # If still no move found, prefer moves that maximize open space
-    if not best_move:
-        for move in possible_moves:
-            new_head = (head[0] + move[0], head[1] + move[1])
-            if wall_wrapping_enabled:
-                new_head = (new_head[0] % GRID_WIDTH, new_head[1] % GRID_HEIGHT)
-            if is_safe(snake_list, head, move):
-                temp_snake = [new_head] + snake_list[:-1]
-                temp_grid = create_grid(temp_snake)
-                space = flood_fill(temp_grid.copy(), new_head)
-                if space > max_space:
-                    max_space = space
-                    best_move = move
-
-    # If still stuck, try to move in a different direction to avoid getting stuck
-    if not best_move:
-        for move in possible_moves:
-            if is_safe(snake_list, head, move):
-                best_move = move
-                break
-
-    return best_move if best_move else snake_direction
+    return find_safe_direction(snake_list)
 
 def find_safe_direction(snake_list):
     """Helper function to find a safe direction when no food is available."""
@@ -657,9 +594,9 @@ def draw_menu():
     screen.blit(text, text_rect)
     
     # Difficulty buttons
-    button_width = 150  # Increased button width
-    button_height = 70  # Increased button height
-    x_start = SCREEN_WIDTH // 2 - (2 * button_width + 10)  # Adjusted x_start
+    button_width = 150
+    button_height = 70
+    x_start = SCREEN_WIDTH // 2 - (2 * button_width + 10)
     y_pos = 150
     spacing = button_width + 10
 
@@ -675,45 +612,54 @@ def draw_menu():
     pygame.draw.rect(screen, WHITE, (x_start, y_pos, button_width, button_height), 2)
     display_message("Speed", WHITE, x_start + button_width // 2, y_pos + button_height // 2)
     
-    # Bottom buttons with corrected positions
-    bottom_button_width = 180
-    bottom_button_height = 60
-    bottom_y = 350  # First row of bottom buttons
-    graphics_y = 450  # Second row (Graphics button)
-    gambler_y = 450
-    
+    # Bottom buttons
+    button_width = 180
+    button_height = 60
+    bottom_y = 350
+    power_up_y = 420
+    settings_y = 490
+
     # AI button
-    ai_x = SCREEN_WIDTH // 6 - bottom_button_width // 2
-    pygame.draw.rect(screen, WHITE, (ai_x, bottom_y, bottom_button_width, bottom_button_height), 2)
+    ai_x = SCREEN_WIDTH // 6 - button_width // 2
+    pygame.draw.rect(screen, WHITE, (ai_x, bottom_y, button_width, button_height), 2)
     ai_status = "AI: " + ("ON" if ai_enabled else "OFF")
-    display_message(ai_status, WHITE, ai_x + bottom_button_width // 2, bottom_y + bottom_button_height // 2)
+    display_message(ai_status, WHITE, ai_x + button_width // 2, bottom_y + button_height // 2)
+    
+    # Power-Up Mode button
+    power_up_x = SCREEN_WIDTH // 6 - button_width // 2
+    pygame.draw.rect(screen, WHITE, (power_up_x, power_up_y, button_width, button_height), 2)
+    power_up_status = "Power-Up: " + ("ON" if power_up_mode_enabled else "OFF")
+    display_message(power_up_status, WHITE, power_up_x + button_width // 2, power_up_y + button_height // 2)
     
     # Wall button
-    wall_x = SCREEN_WIDTH // 2 - bottom_button_width // 2
-    pygame.draw.rect(screen, WHITE, (wall_x, bottom_y, bottom_button_width, bottom_button_height), 2)
+    wall_x = SCREEN_WIDTH // 2 - button_width // 2
+    pygame.draw.rect(screen, WHITE, (wall_x, bottom_y, button_width, button_height), 2)
     wall_status = "Wall: " + ("ON" if wall_wrapping_enabled else "OFF")
-    display_message(wall_status, WHITE, wall_x + bottom_button_width // 2, bottom_y + bottom_button_height // 2)
+    display_message(wall_status, WHITE, wall_x + button_width // 2, bottom_y + button_height // 2)
     
-    # Obstacle button
-    obstacle_x = 5 * SCREEN_WIDTH // 6 - bottom_button_width // 2
-    pygame.draw.rect(screen, WHITE, (obstacle_x, bottom_y, bottom_button_width, bottom_button_height), 2)
+    # Multiplayer button
+    multiplayer_x = SCREEN_WIDTH // 2 - button_width // 2
+    pygame.draw.rect(screen, WHITE, (multiplayer_x, power_up_y, button_width, button_height), 2)
+    multiplayer_status = "Multiplayer: " + ("ON" if multiplayer_enabled else "OFF")
+    multiplayer_font = pygame.font.Font(None, 28)  # Smaller font for better fit
+    multiplayer_text = multiplayer_font.render(multiplayer_status, True, WHITE)
+    multiplayer_text_rect = multiplayer_text.get_rect(center=(multiplayer_x + button_width // 2, power_up_y + button_height // 2))
+    screen.blit(multiplayer_text, multiplayer_text_rect)
+    
+    # Obstacle Mode button
+    obstacle_x = 5 * SCREEN_WIDTH // 6 - button_width // 2
+    pygame.draw.rect(screen, WHITE, (obstacle_x, bottom_y, button_width, button_height), 2)
     obstacle_status = "Obstacle: " + ("ON" if obstacle_mode_enabled else "OFF")
-    display_message(obstacle_status, WHITE, obstacle_x + bottom_button_width // 2, bottom_y + bottom_button_height // 2)
+    display_message(obstacle_status, WHITE, obstacle_x + button_width // 2, bottom_y + button_height // 2)
     
-    # Graphics button (centered, below other buttons)
-    graphics_x = SCREEN_WIDTH // 6 - bottom_button_width // 2
-    pygame.draw.rect(screen, WHITE, (graphics_x, gambler_y, bottom_button_width, bottom_button_height), 2)
-    display_message("Graphics", WHITE, graphics_x + bottom_button_width // 2, gambler_y + bottom_button_height // 2)
-
-    # Gambler button (centered, below other buttons)
-    gambler_x = 5 * SCREEN_WIDTH // 6 - bottom_button_width // 2
-    pygame.draw.rect(screen, WHITE, (gambler_x, gambler_y, bottom_button_width, bottom_button_height), 2)
-    gambler_status = "Gambler: " + ("ON" if power_up_mode_enabled else "OFF")
-    display_message(gambler_status, WHITE, gambler_x + bottom_button_width // 2, gambler_y + bottom_button_height // 2)
+    # Settings button
+    settings_x = 5 * SCREEN_WIDTH // 6 - button_width // 2
+    pygame.draw.rect(screen, WHITE, (settings_x, settings_y, button_width, button_height), 2)
+    display_message("Settings", WHITE, settings_x + button_width // 2, settings_y + button_height // 2)
 
 def handle_menu_click(mouse_pos):
     """Handles mouse clicks in the menu state."""
-    global difficulty, ai_enabled, current_snake_color, game_state, wall_wrapping_enabled, obstacle_mode_enabled, foods, obstacles, power_up_mode_enabled
+    global difficulty, wall_wrapping_enabled, power_up_mode_enabled, multiplayer_enabled, obstacle_mode_enabled, game_state, ai_enabled
     
     # Difficulty buttons
     button_width = 150
@@ -732,54 +678,52 @@ def handle_menu_click(mouse_pos):
             break
 
     # Bottom buttons
-    bottom_button_width = 180
-    bottom_button_height = 60
+    button_width = 180
+    button_height = 60
     bottom_y = 350
-    graphics_y = 450
-    gambler_y = 450
+    power_up_y = 420
+    settings_y = 490
     
     # AI button
-    ai_x = SCREEN_WIDTH // 6 - bottom_button_width // 2
-    if (ai_x <= mouse_pos[0] <= ai_x + bottom_button_width and 
-        bottom_y <= mouse_pos[1] <= bottom_y + bottom_button_height):
+    ai_x = SCREEN_WIDTH // 6 - button_width // 2
+    if (ai_x <= mouse_pos[0] <= ai_x + button_width and 
+        bottom_y <= mouse_pos[1] <= bottom_y + button_height):
         ai_enabled = not ai_enabled
         save_settings()
     
+    # Power-Up Mode button
+    power_up_x = SCREEN_WIDTH // 6 - button_width // 2
+    if (power_up_x <= mouse_pos[0] <= power_up_x + button_width and 
+        power_up_y <= mouse_pos[1] <= power_up_y + button_height):
+        power_up_mode_enabled = not power_up_mode_enabled
+        save_settings()
+
     # Wall button
-    wall_x = SCREEN_WIDTH // 2 - bottom_button_width // 2
-    if (wall_x <= mouse_pos[0] <= wall_x + bottom_button_width and 
-        bottom_y <= mouse_pos[1] <= bottom_y + bottom_button_height):  # Fixed check for button height
+    wall_x = SCREEN_WIDTH // 2 - button_width // 2
+    if (wall_x <= mouse_pos[0] <= wall_x + button_width and 
+        bottom_y <= mouse_pos[1] <= bottom_y + button_height):
         wall_wrapping_enabled = not wall_wrapping_enabled
         save_settings()
 
-    # Obstacle button
-    obstacle_x = 5 * SCREEN_WIDTH // 6 - bottom_button_width // 2
-    if (obstacle_x <= mouse_pos[0] <= obstacle_x + bottom_button_width and 
-        bottom_y <= mouse_pos[1] <= bottom_y + bottom_button_height):  # Fixed check for button height
-        foods = []  # Clear food list
-        obstacles = []  # Clear obstacles
+    # Multiplayer button
+    multiplayer_x = SCREEN_WIDTH // 2 - button_width // 2
+    if (multiplayer_x <= mouse_pos[0] <= multiplayer_x + button_width and 
+        power_up_y <= mouse_pos[1] <= power_up_y + button_height):
+        multiplayer_enabled = not multiplayer_enabled
+        save_settings()
+
+    # Obstacle Mode button
+    obstacle_x = 5 * SCREEN_WIDTH // 6 - button_width // 2
+    if (obstacle_x <= mouse_pos[0] <= obstacle_x + button_width and 
+        bottom_y <= mouse_pos[1] <= bottom_y + button_height):
         obstacle_mode_enabled = not obstacle_mode_enabled
-        place_food()  # Place new food
-        if obstacle_mode_enabled:
-            place_obstacles()  # Place obstacles if enabled
         save_settings()
 
-    # Graphics button
-    graphics_x = SCREEN_WIDTH // 6 - bottom_button_width // 2
-    if (graphics_x <= mouse_pos[0] <= graphics_x + bottom_button_width and 
-        gambler_y <= mouse_pos[1] <= gambler_y + bottom_button_height):
+    # Settings button
+    settings_x = 5 * SCREEN_WIDTH // 6 - button_width // 2
+    if (settings_x <= mouse_pos[0] <= settings_x + button_width and 
+        settings_y <= mouse_pos[1] <= settings_y + button_height):
         game_state = GAME_STATE_GRAPHICS
-
-    # Gambler button
-    gambler_x = 5 * SCREEN_WIDTH // 6 - bottom_button_width // 2
-    if (gambler_x <= mouse_pos[0] <= gambler_x + bottom_button_width and 
-        gambler_y <= mouse_pos[1] <= gambler_y + bottom_button_height):
-        power_up_mode_enabled = not power_up_mode_enabled
-        if power_up_mode_enabled:
-            place_gambler()
-        else:
-            power_ups.clear()
-        save_settings()
 
 def draw_game_over():
     """Draws the game over screen with clickable buttons."""
@@ -787,7 +731,10 @@ def draw_game_over():
     if score > high_score:
         high_score = score
     display_message("Game Over", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 100)
-    display_message(f"Final Score: {score}", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50)
+    if multiplayer_enabled and winner:  # Only show winner message in multiplayer mode
+        display_message(f"{winner} won!", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50)
+    else:
+        display_message(f"Final Score: {score}", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50)
     display_message(f"High Score: {high_score}", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
     
     # Restart button
@@ -966,6 +913,174 @@ def draw_graphics_menu():
     pygame.draw.rect(screen, WHITE, (SCREEN_WIDTH // 2 - 50, back_button_y, 100, 40), 2)
     display_message("Back", WHITE, SCREEN_WIDTH // 2, back_button_y + 20)
 
+# Multiplayer variables
+player_2_snake = [(GRID_WIDTH // 2 - 5, GRID_HEIGHT // 2)]
+player_2_direction = (-1, 0)  # Initial direction: left
+player_2_length = SNAKE_INITIAL_LENGTH
+
+# Power-up effects
+power_up_effects = [
+    "slow_time", "double_score", "shrink_snake", "double_size", "add_length", "reverse_controls"
+]
+
+# Global variable to track active power-up effects and their durations
+active_power_ups = {}  # Format: {"effect_name": remaining_duration_in_seconds}
+
+def apply_power_up_effect(effect):
+    """Applies a random power-up effect."""
+    global difficulty, score, snake_length, invincible, active_power_ups
+    duration = 10  # Default duration for power-ups in seconds
+    active_power_ups[effect] = duration  # Add the effect to the active list
+
+    if effect == "slow_time":
+        difficulty = max(5, difficulty - 5)  # Slow down the game
+    elif effect == "double_score":
+        score += 10  # Add a noticeable score boost
+    elif effect == "shrink_snake":
+        snake_length = max(1, snake_length - 5)  # Shrink the snake
+    elif effect == "double_size":
+        snake_length += 5  # Temporarily increase size
+    elif effect == "add_length":
+        snake_length += 10  # Add 10 length
+    elif effect == "reverse_controls":
+        invincible = True  # Reverse controls temporarily
+
+def update_power_up_effects():
+    """Updates the durations of active power-up effects and removes expired ones."""
+    global difficulty, invincible, active_power_ups
+    expired_effects = []
+
+    for effect, duration in active_power_ups.items():
+        active_power_ups[effect] -= 1 / clock.get_fps()  # Decrease duration based on frame rate
+        if active_power_ups[effect] <= 0:
+            expired_effects.append(effect)
+
+    for effect in expired_effects:
+        del active_power_ups[effect]
+        # Reset any effects that expire
+        if effect == "slow_time":
+            difficulty = DIFFICULTY_EASY  # Reset difficulty to default
+        elif effect == "reverse_controls":
+            invincible = False  # Reset invincibility
+
+def draw_active_power_ups():
+    """Draws the active power-up effects and their remaining durations on the screen."""
+    y_offset = 20
+    for effect, duration in active_power_ups.items():
+        text = f"{effect}: {int(duration)}s"
+        display_message(text, WHITE, SCREEN_WIDTH - 150, y_offset)
+        y_offset += 20
+
+def check_power_up_collision(snake_head):
+    """Checks if the snake's head has collided with any power-up."""
+    global power_ups, active_power_ups
+    for power_up in power_ups[:]:
+        if snake_head == power_up:
+            effect = random.choice(power_up_effects)  # Randomly select a power-up effect
+            apply_power_up_effect(effect)  # Apply the selected effect
+            power_ups.remove(power_up)  # Remove the collected power-up
+            place_power_up()  # Place a new power-up
+            return True  # Indicate that a power-up was collected
+    return False
+
+def move_snake_multiplayer(snake_list, direction, grow=False):
+    """Moves the snake for multiplayer mode."""
+    head = snake_list[0]
+    new_head = (head[0] + direction[0], head[1] + direction[1])
+    new_head = (new_head[0] % GRID_WIDTH, new_head[1] % GRID_HEIGHT)  # Wall wrapping
+    snake_list.insert(0, new_head)
+    if not grow:
+        snake_list.pop()
+    return snake_list
+
+def check_multiplayer_collision():
+    """Checks for collisions between the two players."""
+    global game_state, winner
+    # Check if Player 1 collides with Player 2
+    if snake[0] in player_2_snake:
+        winner = "Player 2" if not ai_enabled else "AI"
+        game_state = GAME_STATE_GAME_OVER
+    # Check if Player 2 collides with Player 1
+    elif player_2_snake[0] in snake:
+        winner = "Player 1"
+        game_state = GAME_STATE_GAME_OVER
+
+def apply_power_up_effect(effect):
+    """Applies a random power-up effect."""
+    global difficulty, score, snake_length, player_2_length, invincible
+    if effect == "slow_time":
+        difficulty = max(5, difficulty - 5)  # Slow down the game
+    elif effect == "double_score":
+        score *= 2  # Double the score
+    elif effect == "shrink_snake":
+        snake_length = max(1, snake_length - 5)  # Shrink the snake
+    elif effect == "double_size":
+        snake_length += 5  # Temporarily increase size
+    elif effect == "add_length":
+        snake_length += 10  # Add 10 length
+    elif effect == "reverse_controls":
+        invincible = True  # Reverse controls temporarily (can be implemented further)
+
+def check_power_up_collision(snake_head):
+    """Checks if the snake's head has collided with any power-up."""
+    global power_ups, active_power_ups
+    for power_up in power_ups[:]:
+        if snake_head == power_up:
+            effect = random.choice(power_up_effects)  # Randomly select a power-up effect
+            apply_power_up_effect(effect)  # Apply the selected effect
+            power_ups.remove(power_up)  # Remove the collected power-up
+            place_power_up()  # Place a new power-up
+            return True  # Indicate that a power-up was collected
+    return False
+
+def draw_power_ups():
+    """Draws the power-ups on the screen."""
+    for power_up in power_ups:
+        pygame.draw.rect(screen, CYAN, (power_up[0] * GRID_SIZE, power_up[1] * GRID_SIZE, GRID_SIZE, GRID_SIZE))
+
+def draw_shop():
+    """Draws the shop screen."""
+    display_message("Shop (Coming Soon)", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50)
+    pygame.draw.rect(screen, WHITE, (SCREEN_WIDTH // 2 - 50, SCREEN_HEIGHT // 2, 100, 40), 2)
+    display_message("Back", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 20)
+
+def draw_custom_levels():
+    """Draws the custom levels screen."""
+    display_message("Custom Levels (Coming Soon)", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50)
+    pygame.draw.rect(screen, WHITE, (SCREEN_WIDTH // 2 - 50, SCREEN_HEIGHT // 2, 100, 40), 2)
+    display_message("Back", WHITE, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 20)
+
+def handle_shop_or_custom_click(mouse_pos):
+    """Handles clicks in Shop or Custom Levels screens."""
+    global game_state
+    if (SCREEN_WIDTH // 2 - 50 <= mouse_pos[0] <= SCREEN_WIDTH // 2 + 50 and 
+        SCREEN_HEIGHT // 2 <= mouse_pos[1] <= SCREEN_HEIGHT // 2 + 40):
+        game_state = GAME_STATE_MENU
+
+# Global variable to hold the winner
+winner = None  # Initialize winner variable
+
+# Separate high scores for each mode
+high_scores = {
+    "normal": 0,
+    "obstacle": 0,
+    "power_up": 0,
+    "multiplayer": 0
+}
+
+def update_high_score():
+    """Updates the high score for the current mode."""
+    global high_scores, score
+    mode = "normal"
+    if obstacle_mode_enabled:
+        mode = "obstacle"
+    elif power_up_mode_enabled:
+        mode = "power_up"
+    elif multiplayer_enabled:
+        mode = "multiplayer"
+    if score > high_scores[mode]:
+        high_scores[mode] = score
+
 # --- Game Loop ---
 running = True
 play_theme_music()
@@ -1034,18 +1149,30 @@ try:
             elif game_state == GAME_STATE_GRAPHICS:
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     handle_graphics_menu_click(pygame.mouse.get_pos())
+            elif game_state in [GAME_STATE_SHOP, GAME_STATE_CUSTOM_LEVELS]:
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    handle_shop_or_custom_click(pygame.mouse.get_pos())
 
         # --- Game Logic ---
         if game_state == GAME_STATE_PLAYING:
-            if ai_enabled:
-                snake_direction = ai_move(snake, foods)
+            update_power_up_effects()  # Update power-up durations
+            if ai_enabled and multiplayer_enabled:
+                player_2_grow = check_food_collision(player_2_snake[0])  # Check if AI eats food
+                player_2_snake = move_snake_multiplayer(player_2_snake, ai_move(player_2_snake, foods), player_2_grow)
 
-            grow = check_food_collision(snake[0])  # Check food collision FIRST
-            gambler_collected = check_gambler_collision(snake[0])  # Check gambler collision
-            snake = move_snake(snake, snake_direction, grow or gambler_collected)  # THEN move the snake
+            grow = check_food_collision(snake[0])  # Check food collision for Player 1
+            power_up_collected = check_power_up_collision(snake[0])  # Check power-up collision
+            snake = move_snake(snake, snake_direction, grow or power_up_collected)  # Move Player 1 snake
 
-            if check_collision(snake):  # THEN check for other collisions
+            if multiplayer_enabled:
+                # Check for collisions between the two snakes
+                check_multiplayer_collision()
+
+            # Check for collisions with walls, self, or obstacles
+            if check_collision(snake) or (multiplayer_enabled and check_collision(player_2_snake)):
                 SOUND_EFFECTS['die'].play()
+                if not winner:  # If no winner yet, Player 1 loses
+                    winner = "Player 2" if not ai_enabled else "AI"
                 game_state = GAME_STATE_GAME_OVER
 
         # --- Drawing ---
@@ -1053,17 +1180,25 @@ try:
         if game_state == GAME_STATE_MENU:
             draw_menu()
         elif game_state == GAME_STATE_PLAYING:
-            draw_snake(snake)
+            draw_snake(snake, current_snake_color)
+            if multiplayer_enabled:
+                draw_snake(player_2_snake, SNAKE_COLORS['BLUE'])
             draw_food()
             draw_obstacles()
-            draw_gamblers()
+            draw_power_ups()
+            draw_active_power_ups()  # Draw active power-ups
             display_message(f"Score: {score}", WHITE, 50, 20)
         elif game_state == GAME_STATE_PAUSED:
             draw_pause_menu()
         elif game_state == GAME_STATE_GAME_OVER:
+            update_high_score()  # Update high score when the game ends
             draw_game_over()
         elif game_state == GAME_STATE_GRAPHICS:
             draw_graphics_menu()
+        elif game_state == GAME_STATE_SHOP:
+            draw_shop()
+        elif game_state == GAME_STATE_CUSTOM_LEVELS:
+            draw_custom_levels()
 
         pygame.display.flip()  # Update the display
         clock.tick(difficulty * 2 if ai_enabled else difficulty)  # Control the game speed
